@@ -1,78 +1,44 @@
-<!DOCTYPE html>
-<html lang="en">
+<!doctype html>
+<html>
 <head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="X-UA-Compatible" content="IE=edge" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Secure Chat — Login</title>
+  <title>Login — Secure Chat</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <style>
-    body { font-family: Inter, Arial, sans-serif; padding: 2rem; color:#111 }
-    input, button { padding: .6rem; font-size:1rem; margin-right:.5rem }
-    #status { margin-top: 1rem; color:#333 }
-    #debug { margin-top: 1rem; background:#f6f8fa; padding:10px; border:1px solid #ddd; max-height:220px; overflow:auto; white-space:pre-wrap; font-size:13px }
+    body{font-family:Inter,Arial;padding:20px}
+    input,button{padding:8px 10px;font-size:14px}
+    #status{margin-top:12px;color:#222}
+    pre#debug{background:#f7f7f8;border:1px solid #ddd;padding:10px;max-height:220px;overflow:auto}
   </style>
 </head>
 <body>
-  <h1>Secure Chat Login</h1>
-  <input id="email-input" type="email" placeholder="you@gmail.com" />
-  <button id="send-link-btn">Send Magic Link</button>
+  <h2>Sign in (magic link)</h2>
+  <input id="email" placeholder="your@gmail.com" type="email" />
+  <button id="send">Send magic link</button>
   <div id="status"></div>
   <pre id="debug">Logs:\n</pre>
 
 <script>
-  // CONFIG - use anon/public key only
-  const SUPA_URL = 'https://dvjihjkyenzkacviywgk.supabase.co';
-  const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2amloamt5ZW56a2Fjdml5d2drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyMzQ0MTgsImV4cCI6MjA2MzgxMDQxOH0.1Hl9Cb-rTbHKDSlnn2tM-6trzOySigUg6Be0xVG2URg';
-  const supa = supabase.createClient(SUPA_URL, SUPA_ANON);
+const SUPA_URL = 'https://dvjihjkyenzkacviywgk.supabase.co'; // replace if different
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2amloamt5ZW56a2Fjdml5d2drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyMzQ0MTgsImV4cCI6MjA2MzgxMDQxOH0.1Hl9Cb-rTbHKDSlnn2tM-6trzOySigUg6Be0xVG2URg'; // <-- replace
+const REGISTER_FULL_URL = 'https://prince16082007.github.io/sln/'; // <-- EXACT register URL you added to Supabase
+const supa = supabase.createClient(SUPA_URL, SUPA_ANON);
 
-  const statusEl = document.getElementById('status');
-  const dbg = document.getElementById('debug');
-  function log(...args){ dbg.textContent += args.join(' ') + '\n'; dbg.scrollTop = dbg.scrollHeight; console.log(...args); }
+const dbg = document.getElementById('debug'), status = document.getElementById('status');
+function log(...a){ dbg.textContent += a.join(' ') + '\n'; dbg.scrollTop = dbg.scrollHeight; console.log(...a) }
 
-  const btn = document.getElementById('send-link-btn');
-  const emailInput = document.getElementById('email-input');
-
-  async function sendMagicLink(){
-    const email = (emailInput.value || '').trim();
-    if(!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)){
-      statusEl.textContent = 'Enter a valid email first.';
-      return;
-    }
-    try {
-      btn.disabled = true;
-      statusEl.textContent = 'Sending magic link...';
-      log('Sending magic link to:', email);
-
-      const redirectTo = 'https://prince16082007.github.io/sln/index.html';
-const { data, error } = await supa.auth.signInWithOtp({
-  email,
-  options: { redirectTo }
-});
-
-      if (error) {
-        log('signInWithOtp Error:', error);
-        statusEl.textContent = 'Error: ' + (error.message || String(error));
-      } else {
-        // data.user and data.session are often null for magic-link (expected)
-        log('Magic link send result:', data);
-        statusEl.textContent = 'Magic link sent. Check your email (link opens register page).';
-        // note for debugging
-        log('Note: signInWithOtp often returns {user:null, session:null}. Session is created only after clicking the link.');
-      }
-    } catch(e) {
-      log('Unexpected error sending magic link:', e);
-      statusEl.textContent = 'Unexpected error. See logs.';
-    } finally {
-      btn.disabled = false;
-    }
-  }
-
-  btn.addEventListener('click', sendMagicLink);
-  emailInput.addEventListener('keyup', (e)=>{ if(e.key === 'Enter') sendMagicLink(); });
-
-  // Helpful tip show
-  log('Tip: If your email app opens links in an in-app webview which strips fragments, copy the link and paste into Chrome/desktop.');
+document.getElementById('send').onclick = async () => {
+  const email = document.getElementById('email').value.trim();
+  if(!email){ status.textContent='Enter an email'; return; }
+  status.textContent = 'Sending magic link...'; log('sendMagicLink to', email);
+  const { data, error } = await supa.auth.signInWithOtp({
+    email,
+    options: { redirectTo: REGISTER_FULL_URL }
+  });
+  if(error){ status.textContent = 'Error: ' + error.message; log('signInWithOtp error', error); }
+  else { status.textContent = 'Magic link sent — check your inbox (and spam).'; log('signInWithOtp data', data); }
+};
 </script>
 </body>
 </html>
