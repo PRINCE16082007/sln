@@ -4,12 +4,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Register Device — Secure Chat</title>
-
-  <!-- Supabase client -->
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <!-- FingerprintJS2 (fallback lib) -->
   <script src="https://cdn.jsdelivr.net/npm/fingerprintjs2@2.1.0/dist/fingerprint2.min.js"></script>
-
   <style>
     body { font-family: Inter, Arial, sans-serif; padding: 16px; color:#111 }
     h1 { margin:0 0 8px 0; font-size:1.2rem; }
@@ -23,46 +19,68 @@
   <pre id="debug">Logs:\n</pre>
 
 <script>
-/* -------- CONFIG - REPLACE THIS -------- */
+/* CONFIG: use your anon/public key (do NOT use service role key) */
 const SUPA_URL = 'https://dvjihjkyenzkacviywgk.supabase.co';
-const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2amloamt5ZW56a2Fjdml5d2drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyMzQ0MTgsImV4cCI6MjA2MzgxMDQxOH0.1Hl9Cb-rTbHKDSlnn2tM-6trzOySigUg6Be0xVG2URg'; // <-- replace with your anon/public key
-/* -------------------------------------- */
-
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2amloamt5ZW56a2Fjdml5d2drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyMzQ0MTgsImV4cCI6MjA2MzgxMDQxOH0.1Hl9Cb-rTbHKDSlnn2tM-6trzOySigUg6Be0xVG2URg';
 const supa = supabase.createClient(SUPA_URL, SUPA_ANON);
+
 const statusEl = document.getElementById('status');
 const dbg = document.getElementById('debug');
-function log(...args){ const line = args.map(a=>typeof a==='string'?a:JSON.stringify(a)).join(' '); dbg.textContent += line + '\n'; dbg.scrollTop = dbg.scrollHeight; console.log('[reg]', ...args); }
+function log(...args){ dbg.textContent += args.map(a=> (typeof a === 'string'? a : JSON.stringify(a)) ).join(' ') + '\n'; dbg.scrollTop = dbg.scrollHeight; console.log(...args); }
 
-/* ----- Helpers ----- */
+/* Helpers */
 function urlHasToken() {
   const h = window.location.hash || '';
   const s = window.location.search || '';
-  return h.includes('access_token') || s.includes('access_token') || s.includes('refresh_token') || h.includes('refresh_token');
+  return /access_token|refresh_token/.test(h) || /access_token|refresh_token/.test(s);
 }
-
+function parseTokenFromUrl() {
+  // returns { access_token, refresh_token } if found (from hash or query)
+  const result = {};
+  try {
+    const hash = (window.location.hash || '').replace(/^#/, '');
+    const q1 = new URLSearchParams(hash);
+    if (q1.get('access_token')) {
+      result.access_token = q1.get('access_token');
+      result.refresh_token = q1.get('refresh_token') || null;
+      return result;
+    }
+    const q2 = new URLSearchParams(window.location.search || '');
+    if (q2.get('access_token')) {
+      result.access_token = q2.get('access_token');
+      result.refresh_token = q2.get('refresh_token') || null;
+      return result;
+    }
+  } catch(e) {
+    // ignore
+  }
+  return result;
+}
 function clearUrlTokens() {
   try {
-    // remove fragment and query tokens to avoid reprocessing
-    history.replaceState({}, document.title, window.location.pathname + window.location.search.replace(/(access_token=.*?(&|$))|(refresh_token=.*?(&|$))/g,''));
+    // remove tokens from both search and hash while preserving other params
+    const url = new URL(window.location.href);
+    // clear hash entirely (we processed it)
+    url.hash = '';
+    // remove token keys from search
+    ['access_token','refresh_token','type','expires_in','provider_token'].forEach(k=> url.searchParams.delete(k));
+    history.replaceState({}, document.title, url.pathname + url.search + url.hash);
+    log('Cleared tokens from URL.');
   } catch(e){ log('clearUrlTokens error', e); }
 }
 
-/* ----- Fingerprint: try FingerprintJS2, fallback to SHA-256 custom ----- */
+/* Fingerprint helpers (unchanged) */
 function fp2_get() {
   return new Promise(resolve => {
     try {
-      // small delay is recommended by the lib
       setTimeout(() => {
         new Fingerprint2().get(function(result, components){
           resolve({ ok: true, hash: result, components });
         });
       }, 50);
-    } catch (e) {
-      resolve({ ok:false, error: e });
-    }
+    } catch (e) { resolve({ ok:false, error:e }); }
   });
 }
-
 async function sha256_fingerprint() {
   try {
     const parts = [
@@ -80,12 +98,10 @@ async function sha256_fingerprint() {
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
     const hex = Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
     return { ok:true, hash: 'sha2_' + hex };
-  } catch(e) {
-    return { ok:false, error:e };
-  }
+  } catch(e) { return { ok:false, error:e }; }
 }
 
-/* ----- Call Edge Function ----- */
+/* Call Edge Function */
 async function callRegister(payload) {
   const projectRef = SUPA_URL.split('://')[1].split('.supabase.co')[0];
   const fnUrl = `https://${projectRef}.functions.supabase.co/register-user`;
@@ -104,58 +120,75 @@ async function callRegister(payload) {
   }
 }
 
-/* ----- Main registration flow ----- */
-async function runRegistration() {
+/* Main flow */
+async function runRegistration(){
   try {
     statusEl.textContent = 'Handling magic link/session...';
     log('Start registration workflow');
 
-    // If there is a token fragment in the URL, try to store it in supabase client storage
+    // 1) First try the built-in helper, but be tolerant
     if (urlHasToken()) {
-      log('URL has token — calling getSessionFromUrl to store it.');
+      log('URL has token — attempting supa.auth.getSessionFromUrl({storeSession:true})');
       try {
-        const s = await supa.auth.getSessionFromUrl({ storeSession: true });
-        log('getSessionFromUrl result:', s);
+        const res = await supa.auth.getSessionFromUrl({ storeSession: true }).catch(e => { throw e; });
+        log('getSessionFromUrl result:', res);
+        // Sometimes getSessionFromUrl returns {} or throws; we'll continue to fallback if no user
       } catch(e){
-        log('getSessionFromUrl() threw:', e);
-        // continue — sometimes throws {} or empty; user might be already signed in
+        log('getSessionFromUrl() threw (continuing to fallback):', e);
       }
-      // clear tokens from URL for cleanliness
+      // fallback: manual parse + setSession if needed
+      const parsed = parseTokenFromUrl();
+      if (parsed.access_token) {
+        log('Found tokens via manual parse (fallback). Setting session manually (redact tokens in public logs).');
+        try {
+          // setSession will store tokens in local storage for supabase client to use
+          const setRes = await supa.auth.setSession({
+            access_token: parsed.access_token,
+            refresh_token: parsed.refresh_token
+          }).catch(e=>({ error:e }));
+          log('setSession result:', setRes);
+        } catch(e) {
+          log('setSession error:', e);
+        }
+      } else {
+        log('No access_token found via manual parse. (Maybe fragment stripped by mail app)');
+      }
+      // cleanup URL so we don't reprocess on refresh
       clearUrlTokens();
     } else {
-      log('No token in URL.');
+      log('No token in URL at all.');
     }
 
-    // Try to get user right away
+    // 2) Try to get user immediately
     statusEl.textContent = 'Retrieving user...';
     const { data: userData, error: userErr } = await supa.auth.getUser().catch(e=>({ error:e }));
     if (userErr) log('getUser error:', userErr);
     const user = userData && userData.user ? userData.user : null;
 
     if (!user) {
-      // Wait short time for auth event (some flows need storage update)
-      log('No active user yet. Listening for SIGNED_IN for up to 6s.');
+      log('No active user yet. Listening for SIGNED_IN for up to 8s.');
       statusEl.textContent = 'Waiting for sign-in (magic link)...';
       let done = false;
       const timeout = setTimeout(()=>{
         if (!done) {
-          log('Auth wait timed out.');
+          log('Auth wait timed out (8s). Redirecting back to login.');
           statusEl.textContent = 'Not signed in. Redirecting to login...';
-          setTimeout(()=>window.location.href = '/login.html', 800);
+          setTimeout(()=>window.location.href = '/login.html', 700);
         }
-      }, 6000);
+      }, 8000);
 
-      supa.auth.onAuthStateChange((event, session) => {
-        log('Auth event:', event, session ? 'session present' : '(no session)');
+      const { data: listener } = supa.auth.onAuthStateChange((event, session) => {
+        log('Auth event:', event, session ? '(session present)' : '(no session)');
         if (event === 'SIGNED_IN' && session && !done) {
           done = true; clearTimeout(timeout);
-          doRegister(session.user);
+          listener?.unsubscribe?.(); // cleanup
+          doRegister(session.user).catch(e=> log('doRegister error after sign-in:', e));
         }
       });
       return;
     }
 
-    // If user exists, register immediately
+    // user present -> register
     doRegister(user);
 
   } catch(e) {
@@ -169,28 +202,25 @@ async function doRegister(user) {
     statusEl.textContent = 'Generating fingerprint...';
     log('User found:', user.email);
 
-    // 1) Try FP2
+    // fingerprint
     const fp2 = await fp2_get();
     let deviceHash;
     if (fp2.ok && fp2.hash) {
       deviceHash = 'fp2_' + fp2.hash;
-      log('FingerprintJS2 success, hash:', deviceHash);
+      log('FingerprintJS2 success');
     } else {
-      log('FingerprintJS2 failed or unavailable:', fp2.error || fp2);
-      // fallback to SHA256 method
+      log('FingerprintJS2 failed — doing SHA256 fallback', fp2.error || fp2);
       const s = await sha256_fingerprint();
       if (s.ok) {
         deviceHash = s.hash;
-        log('SHA256 fallback hash:', deviceHash);
+        log('SHA256 fallback hash computed');
       } else {
-        log('Fallback fingerprint failed:', s.error);
         deviceHash = 'uid_' + Math.random().toString(36).slice(2,10);
         log('Using random fallback id:', deviceHash);
       }
     }
 
     statusEl.textContent = 'Registering device with server...';
-
     const payload = {
       email: user.email,
       name: (user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name)) || user.email,
@@ -217,7 +247,6 @@ async function doRegister(user) {
   }
 }
 
-/* start */
 window.addEventListener('DOMContentLoaded', runRegistration);
 </script>
 </body>
