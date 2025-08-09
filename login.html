@@ -44,11 +44,11 @@
       statusEl.textContent = 'Sending magic link...';
       log('Sending magic link to:', email);
 
-      const redirectTo = window.location.origin + '/register.html';
-      const { data, error } = await supa.auth.signInWithOtp({
-        email,
-        options: { redirectTo }
-      });
+      const redirectTo = 'https://prince16082007.github.io/sln/index.html';
+const { data, error } = await supa.auth.signInWithOtp({
+  email,
+  options: { redirectTo }
+});
 
       if (error) {
         log('signInWithOtp Error:', error);
