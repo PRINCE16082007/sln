@@ -105,7 +105,7 @@ async function doRegister(user){
 
     if(res.ok && (res.body.status === 'registered' || res.body.status === 'authorized')){
       statusEl.textContent = 'Registered — redirecting to chat...';
-      setTimeout(()=>location.href='/sln/chat.html',900);
+      setTimeout(()=>location.href='/sln_chat_interface.html',900);
     } else if(res.body && res.body.status === 'unauthorized'){
       statusEl.textContent = 'Access denied: unauthorized device';
       log('unauthorized', res.body);
