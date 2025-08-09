@@ -1,253 +1,122 @@
 <!doctype html>
-<html lang="en">
+<html>
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Register Device — Secure Chat</title>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Register device — Secure Chat</title>
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://cdn.jsdelivr.net/npm/fingerprintjs2@2.1.0/dist/fingerprint2.min.js"></script>
   <style>
-    body { font-family: Inter, Arial, sans-serif; padding: 16px; color:#111 }
-    h1 { margin:0 0 8px 0; font-size:1.2rem; }
-    #status { color:#333; margin-bottom:8px; }
-    pre#debug { background:#f6f8fa; border:1px solid #ddd; padding:10px; max-height:360px; overflow:auto; white-space:pre-wrap; font-size:13px; }
+    body{font-family:Inter,Arial;padding:16px}
+    #status{margin-bottom:10px;color:#222}
+    pre#debug{background:#f7f7f8;border:1px solid #ddd;padding:10px;max-height:300px;overflow:auto}
   </style>
 </head>
 <body>
-  <h1>Registering your device…</h1>
-  <div id="status">Initializing…</div>
+  <h2>Registering device...</h2>
+  <div id="status">Starting...</div>
   <pre id="debug">Logs:\n</pre>
 
 <script>
-/* CONFIG: use your anon/public key (do NOT use service role key) */
-const SUPA_URL = 'https://dvjihjkyenzkacviywgk.supabase.co';
-const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2amloamt5ZW56a2Fjdml5d2drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyMzQ0MTgsImV4cCI6MjA2MzgxMDQxOH0.1Hl9Cb-rTbHKDSlnn2tM-6trzOySigUg6Be0xVG2URg';
+/* CONFIG */
+const SUPA_URL = 'https://dvjihjkyenzkacviywgk.supabase.co'; // replace if different
+const SUPA_ANON = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImR2amloamt5ZW56a2Fjdml5d2drIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDgyMzQ0MTgsImV4cCI6MjA2MzgxMDQxOH0.1Hl9Cb-rTbHKDSlnn2tM-6trzOySigUg6Be0xVG2URg'; // <-- replace
+const EDGE_REGISTER_FN = 'register-user'; // edge function name you deployed
 const supa = supabase.createClient(SUPA_URL, SUPA_ANON);
 
-const statusEl = document.getElementById('status');
-const dbg = document.getElementById('debug');
-function log(...args){ dbg.textContent += args.map(a=> (typeof a === 'string'? a : JSON.stringify(a)) ).join(' ') + '\n'; dbg.scrollTop = dbg.scrollHeight; console.log(...args); }
+const statusEl = document.getElementById('status'), dbg = document.getElementById('debug');
+function log(...a){ dbg.textContent += a.join(' ') + '\n'; dbg.scrollTop = dbg.scrollHeight; console.log(...a) }
 
-/* Helpers */
-function urlHasToken() {
+/* HELPERS */
+function urlHasToken(){
   const h = window.location.hash || '';
   const s = window.location.search || '';
-  return /access_token|refresh_token/.test(h) || /access_token|refresh_token/.test(s);
+  return h.includes('access_token') || s.includes('access_token') || s.includes('refresh_token') || h.includes('refresh_token');
 }
-function parseTokenFromUrl() {
-  // returns { access_token, refresh_token } if found (from hash or query)
-  const result = {};
-  try {
-    const hash = (window.location.hash || '').replace(/^#/, '');
-    const q1 = new URLSearchParams(hash);
-    if (q1.get('access_token')) {
-      result.access_token = q1.get('access_token');
-      result.refresh_token = q1.get('refresh_token') || null;
-      return result;
-    }
-    const q2 = new URLSearchParams(window.location.search || '');
-    if (q2.get('access_token')) {
-      result.access_token = q2.get('access_token');
-      result.refresh_token = q2.get('refresh_token') || null;
-      return result;
-    }
-  } catch(e) {
-    // ignore
-  }
-  return result;
+function clearUrlTokens(){
+  try{ history.replaceState({}, document.title, window.location.pathname + window.location.search.replace(/(access_token=.*?(&|$))|(refresh_token=.*?(&|$))/g,'')); }catch(e){ log('clearUrlTokens error',e) }
 }
-function clearUrlTokens() {
-  try {
-    // remove tokens from both search and hash while preserving other params
-    const url = new URL(window.location.href);
-    // clear hash entirely (we processed it)
-    url.hash = '';
-    // remove token keys from search
-    ['access_token','refresh_token','type','expires_in','provider_token'].forEach(k=> url.searchParams.delete(k));
-    history.replaceState({}, document.title, url.pathname + url.search + url.hash);
-    log('Cleared tokens from URL.');
-  } catch(e){ log('clearUrlTokens error', e); }
-}
-
-/* Fingerprint helpers (unchanged) */
-function fp2_get() {
-  return new Promise(resolve => {
-    try {
-      setTimeout(() => {
-        new Fingerprint2().get(function(result, components){
-          resolve({ ok: true, hash: result, components });
-        });
-      }, 50);
-    } catch (e) { resolve({ ok:false, error:e }); }
-  });
-}
-async function sha256_fingerprint() {
-  try {
+async function sha256Fingerprint(){
+  try{
     const parts = [
-      navigator.userAgent || '',
-      navigator.language || '',
-      screen.width || '',
-      screen.height || '',
-      screen.colorDepth || '',
-      new Date().getTimezoneOffset(),
-      window.devicePixelRatio || '',
-      navigator.hardwareConcurrency || '',
-      navigator.platform || ''
+      navigator.userAgent||'', navigator.language||'',
+      screen.width||'', screen.height||'', screen.colorDepth||'',
+      new Date().getTimezoneOffset(), window.devicePixelRatio||'',
+      navigator.hardwareConcurrency||'', navigator.platform||''
     ];
     const raw = parts.join('::');
     const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(raw));
     const hex = Array.from(new Uint8Array(buf)).map(b=>b.toString(16).padStart(2,'0')).join('');
-    return { ok:true, hash: 'sha2_' + hex };
-  } catch(e) { return { ok:false, error:e }; }
+    return 'sha2_' + hex;
+  }catch(e){ return 'fallback_' + Math.random().toString(36).slice(2,9) }
 }
-
-/* Call Edge Function */
-async function callRegister(payload) {
+async function callRegisterFn(payload){
   const projectRef = SUPA_URL.split('://')[1].split('.supabase.co')[0];
-  const fnUrl = `https://${projectRef}.functions.supabase.co/register-user`;
-  log('Edge function URL:', fnUrl);
-  log('Payload:', payload);
-  try {
-    const res = await fetch(fnUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
-    });
-    const json = await res.json().catch(()=>({ error: 'invalid-json' }));
-    return { ok: res.ok, status: res.status, body: json };
-  } catch(e) {
-    return { ok:false, error:e };
-  }
+  const fnUrl = `https://${projectRef}.functions.supabase.co/${EDGE_REGISTER_FN}`;
+  log('Calling', fnUrl);
+  log('Payload', payload);
+  const res = await fetch(fnUrl, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+  let json; try{ json = await res.json(); }catch(e){ json = { error:'invalid-json' } }
+  return { ok: res.ok, status: res.status, body: json };
 }
 
-/* Main flow */
-async function runRegistration(){
-  try {
-    statusEl.textContent = 'Handling magic link/session...';
-    log('Start registration workflow');
-
-    // 1) First try the built-in helper, but be tolerant
-    if (urlHasToken()) {
-      log('URL has token — attempting supa.auth.getSessionFromUrl({storeSession:true})');
-      try {
-        const res = await supa.auth.getSessionFromUrl({ storeSession: true }).catch(e => { throw e; });
-        log('getSessionFromUrl result:', res);
-        // Sometimes getSessionFromUrl returns {} or throws; we'll continue to fallback if no user
-      } catch(e){
-        log('getSessionFromUrl() threw (continuing to fallback):', e);
+/* MAIN */
+async function run(){
+  try{
+    statusEl.textContent = 'Handling auth tokens...'; log('run start');
+    if(urlHasToken()){
+      try{
+        const sessionFromUrl = await supa.auth.getSessionFromUrl({ storeSession: true }).catch(e=>{ throw e });
+        log('getSessionFromUrl result', sessionFromUrl);
+      }catch(e){
+        // sometimes throws empty object — log & continue
+        log('getSessionFromUrl threw', e);
       }
-      // fallback: manual parse + setSession if needed
-      const parsed = parseTokenFromUrl();
-      if (parsed.access_token) {
-        log('Found tokens via manual parse (fallback). Setting session manually (redact tokens in public logs).');
-        try {
-          // setSession will store tokens in local storage for supabase client to use
-          const setRes = await supa.auth.setSession({
-            access_token: parsed.access_token,
-            refresh_token: parsed.refresh_token
-          }).catch(e=>({ error:e }));
-          log('setSession result:', setRes);
-        } catch(e) {
-          log('setSession error:', e);
-        }
-      } else {
-        log('No access_token found via manual parse. (Maybe fragment stripped by mail app)');
-      }
-      // cleanup URL so we don't reprocess on refresh
       clearUrlTokens();
-    } else {
-      log('No token in URL at all.');
-    }
+    } else log('No token in URL');
 
-    // 2) Try to get user immediately
-    statusEl.textContent = 'Retrieving user...';
+    statusEl.textContent = 'Reading user...';
     const { data: userData, error: userErr } = await supa.auth.getUser().catch(e=>({ error:e }));
-    if (userErr) log('getUser error:', userErr);
+    if(userErr) log('getUser error', userErr);
     const user = userData && userData.user ? userData.user : null;
-
-    if (!user) {
-      log('No active user yet. Listening for SIGNED_IN for up to 8s.');
-      statusEl.textContent = 'Waiting for sign-in (magic link)...';
+    if(!user){
+      statusEl.textContent = 'Waiting for sign-in...';
+      log('No user found immediately — listening for SIGNED_IN for 6s');
       let done = false;
-      const timeout = setTimeout(()=>{
-        if (!done) {
-          log('Auth wait timed out (8s). Redirecting back to login.');
-          statusEl.textContent = 'Not signed in. Redirecting to login...';
-          setTimeout(()=>window.location.href = '/login.html', 700);
-        }
-      }, 8000);
-
-      const { data: listener } = supa.auth.onAuthStateChange((event, session) => {
-        log('Auth event:', event, session ? '(session present)' : '(no session)');
-        if (event === 'SIGNED_IN' && session && !done) {
-          done = true; clearTimeout(timeout);
-          listener?.unsubscribe?.(); // cleanup
-          doRegister(session.user).catch(e=> log('doRegister error after sign-in:', e));
-        }
-      });
+      const timeout = setTimeout(()=>{ if(!done){ log('auth wait timed out'); statusEl.textContent='Not signed in. Redirecting to login...'; setTimeout(()=>location.href='/sln/login.html',800) } }, 6000);
+      supa.auth.onAuthStateChange((event, session)=>{ log('auth event', event); if(event==='SIGNED_IN' && session && !done){ done=true; clearTimeout(timeout); doRegister(session.user) }});
       return;
     }
-
-    // user present -> register
+    // user exists
     doRegister(user);
-
-  } catch(e) {
-    log('runRegistration exception:', e);
-    statusEl.textContent = 'Unexpected error. See debug.';
-  }
+  }catch(e){ log('run exception', e); statusEl.textContent='Error. See debug.' }
 }
 
-async function doRegister(user) {
-  try {
-    statusEl.textContent = 'Generating fingerprint...';
-    log('User found:', user.email);
+async function doRegister(user){
+  try{
+    statusEl.textContent = 'Fingerprinting...'; log('User:', user.email);
+    // try to get fingerprint using SHA fallback (reliable)
+    const deviceHash = await sha256Fingerprint();
+    log('Device hash', deviceHash);
 
-    // fingerprint
-    const fp2 = await fp2_get();
-    let deviceHash;
-    if (fp2.ok && fp2.hash) {
-      deviceHash = 'fp2_' + fp2.hash;
-      log('FingerprintJS2 success');
-    } else {
-      log('FingerprintJS2 failed — doing SHA256 fallback', fp2.error || fp2);
-      const s = await sha256_fingerprint();
-      if (s.ok) {
-        deviceHash = s.hash;
-        log('SHA256 fallback hash computed');
-      } else {
-        deviceHash = 'uid_' + Math.random().toString(36).slice(2,10);
-        log('Using random fallback id:', deviceHash);
-      }
-    }
+    statusEl.textContent = 'Calling server...';
+    const payload = { email: user.email, name: (user.user_metadata && (user.user_metadata.full_name||user.user_metadata.name))||user.email, deviceHash };
+    const res = await callRegisterFn(payload);
+    log('Server response', res);
 
-    statusEl.textContent = 'Registering device with server...';
-    const payload = {
-      email: user.email,
-      name: (user.user_metadata && (user.user_metadata.full_name || user.user_metadata.name)) || user.email,
-      deviceHash
-    };
-
-    const result = await callRegister(payload);
-    log('Register result:', result);
-
-    if (result.ok && (result.body.status === 'authorized' || result.body.status === 'registered')) {
-      statusEl.textContent = 'Device registered. Redirecting to chat…';
-      setTimeout(()=>window.location.href = '/chat.html', 900);
-    } else if (result.body && result.body.status === 'unauthorized') {
+    if(res.ok && (res.body.status === 'registered' || res.body.status === 'authorized')){
+      statusEl.textContent = 'Registered — redirecting to chat...';
+      setTimeout(()=>location.href='/sln/chat.html',900);
+    } else if(res.body && res.body.status === 'unauthorized'){
       statusEl.textContent = 'Access denied: unauthorized device';
-      log('Server says unauthorized:', result.body);
+      log('unauthorized', res.body);
     } else {
-      statusEl.textContent = 'Server error, see debug';
-      log('Unexpected server response:', result);
+      statusEl.textContent = 'Server error. See debug below.';
+      log('unexpected server result', res);
     }
-
-  } catch(e) {
-    log('doRegister exception:', e);
-    statusEl.textContent = 'Error during registration. See debug.';
-  }
+  }catch(e){ log('doRegister exception', e); statusEl.textContent='Error during registration. See debug.' }
 }
 
-window.addEventListener('DOMContentLoaded', runRegistration);
+window.addEventListener('DOMContentLoaded', run);
 </script>
 </body>
 </html>
